@@ -1,0 +1,104 @@
+# CI workflow
+name: Dart CI
+
+# Triggers the workflow on push or pull request events but only for the `main` branch
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  min-conditions:
+    name: Format and analyze
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v2
+      - name: Install dart
+        uses: dart-lang/setup-dart@v1
+      - name: Install melos
+        run: dart pub global activate melos ^1.0.0-dev.10
+      - name: Initialize melos
+        run: melos bs
+      - name: Format and analyze
+        run: melos run FA:ci
+
+  src-gen:
+    name: Ensure up-to-date source generation
+    runs-on: ubuntu-latest
+    needs: min-conditions
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v2
+      - name: Install dart
+        uses: dart-lang/setup-dart@v1
+      - name: Verify up-to-date generated source files
+        run: dart test --run-skipped -t ci-only test/ensure_up_to_date_src_gen_test.dart
+
+  test:
+    name: Test implementation
+    needs: src-gen
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v2
+      - name: Install dart
+        uses: dart-lang/setup-dart@v1
+      - name: Install melos
+        run: dart pub global activate melos ^1.0.0-dev.10
+      - name: Install coverage
+        run: dart pub global activate coverage
+      - name: Install coverde
+        run: dart pub global activate --source path .
+      - name: Initialize melos
+        run: melos bs
+      - name: Run tests, merge tests if needed, and check 100% coverage
+        run: melos run TMC:ci
+      - name: Update coverage trace file as artifact
+        uses: actions/upload-artifact@v2
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: filtered.lcov.info
+          path: ./coverage/filtered.lcov.info
+          retention-days: 1
+
+  codecov:
+    name: Publish coverage results
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download coverage trace file artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: filtered.lcov.info
+      - name: Upload coverage data to Codecov
+        uses: codecov/codecov-action@v2
+        with:
+          files: filtered.lcov.info
+          fail_ci_if_error: true
+          verbose: true
+
+  pana:
+    name: Check pub score
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v2
+      - name: Install dart
+        uses: dart-lang/setup-dart@v1
+      - name: Install melos
+        run: dart pub global activate melos ^1.0.0-dev.10
+      - name: Install pana
+        run: dart pub global activate pana
+      - name: Initialize melos
+        run: melos bs
+      - name: Verify pub score (10pts of tolerance)
+        run: melos run P
